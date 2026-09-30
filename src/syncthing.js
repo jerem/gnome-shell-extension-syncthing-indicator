@@ -14,6 +14,8 @@ import Soup from "gi://Soup";
 
 import * as Utils from "./utils.js";
 
+Gio._promisify(Gio.DBusConnection.prototype, "call");
+
 const LOG_PREFIX = "syncthing-indicator-manager:";
 const POLL_TIME = 20000;
 const POLL_DELAY_TIME = 2000;
@@ -25,6 +27,10 @@ const ITEM_STATE_DELAY = 200;
 const RESCHEDULE_EVENT_DELAY = 50;
 const HTTP_ERROR_RETRIES = 3;
 const SYSTEMD_COMMAND = "systemctl";
+const SYSTEMD_BUS_NAME = "org.freedesktop.systemd1";
+const SYSTEMD_MANAGER_PATH = "/org/freedesktop/systemd1";
+const SYSTEMD_MANAGER_IFACE = "org.freedesktop.systemd1.Manager";
+const SYSTEMD_UNIT_IFACE = "org.freedesktop.systemd1.Unit";
 const SYSTEMD_RETRIES = 3;
 const SYSTEMD_RETRY_DELAY = 2000;
 
@@ -375,6 +381,7 @@ export class Manager extends Utils.Emitter {
   #serviceUserMode = true;
   #serviceConnected = false;
   #pollTimer = new Utils.Timer(POLL_TIME, true);
+  #unitPaths = new Map();
   #pollCount = 1; // Start at 1 to stop from cycling the hooks at init
   #lastEventID = 1;
   #hostID = "";
@@ -816,8 +823,8 @@ export class Manager extends Utils.Emitter {
       error = false,
       command = "api";
     if (this.#extensionConfig.useSystemD) {
-      const command = await this.#serviceCommand(
-        "is-active",
+      const command = await this.#serviceProperty(
+        "ActiveState",
         this.#serviceUserMode,
       );
       active = command == "active";
@@ -867,7 +874,7 @@ export class Manager extends Utils.Emitter {
   async #isServiceEnabled(user = true) {
     if (!this.#extensionConfig.useSystemD)
       return (this.#serviceUserMode = this.#serviceEnabled = false);
-    let command = await this.#serviceCommand("is-enabled", user),
+    let command = await this.#serviceProperty("UnitFileState", user),
       enabled = command == "enabled";
     if (!enabled && user) {
       return await this.#isServiceEnabled(false);
@@ -898,6 +905,73 @@ export class Manager extends Utils.Emitter {
     return enabled;
   }
 
+  // Unit name as systemd knows it, for the user unit or the system template
+  // instance
+  #serviceUnit(user = true) {
+    const name = user ? Service.NAME : Service.NAME + "@" + GLib.get_user_name();
+    return name.endsWith(".service") ? name : name + ".service";
+  }
+
+  // Read a unit property straight from systemd over D-Bus. The state poll
+  // runs every 20 seconds, and forking systemctl from the shell for each
+  // poll was the single largest fixed cost of this extension. Returns the
+  // same strings systemctl prints ("active", "enabled", ...) or "error", so
+  // the callers keep their API-only fallback.
+  async #serviceProperty(property, user = true) {
+    const bus = user ? Gio.DBus.session : Gio.DBus.system;
+    const unit = this.#serviceUnit(user);
+    const key = (user ? "user:" : "system:") + unit;
+    console.debug(LOG_PREFIX, "querying systemd", property, key);
+    try {
+      let path = this.#unitPaths.get(key);
+      if (!path) {
+        // LoadUnit, unlike GetUnit, also answers for units that are not
+        // loaded yet, and reports a missing unit file as an inactive unit
+        [path] = (
+          await bus.call(
+            SYSTEMD_BUS_NAME,
+            SYSTEMD_MANAGER_PATH,
+            SYSTEMD_MANAGER_IFACE,
+            "LoadUnit",
+            new GLib.Variant("(s)", [unit]),
+            new GLib.VariantType("(o)"),
+            Gio.DBusCallFlags.NONE,
+            -1,
+            null,
+          )
+        ).deepUnpack();
+        this.#unitPaths.set(key, path);
+      }
+      const [value] = (
+        await bus.call(
+          SYSTEMD_BUS_NAME,
+          path,
+          "org.freedesktop.DBus.Properties",
+          "Get",
+          new GLib.Variant("(ss)", [SYSTEMD_UNIT_IFACE, property]),
+          new GLib.VariantType("(v)"),
+          Gio.DBusCallFlags.NONE,
+          -1,
+          null,
+        )
+      ).recursiveUnpack();
+      return value;
+    } catch (error) {
+      // Drop the cached path; a daemon-reload can invalidate it
+      this.#unitPaths.delete(key);
+      console.warn(
+        LOG_PREFIX,
+        "systemd query failed",
+        property,
+        key,
+        error.message,
+      );
+      return "error";
+    }
+  }
+
+  // Runs systemctl for the state-changing verbs (enable, disable, start,
+  // stop); these are user-initiated and rare, so a fork is fine here
   async #serviceCommand(command, user = true) {
     let args = [SYSTEMD_COMMAND, command];
     if (user) {
