@@ -70,7 +70,16 @@ export class Timer {
     recurring = false,
     priority = GLib.PRIORITY_DEFAULT,
   ) {
-    return new Timer(timeout, recurring, priority).run(callback);
+    const timer = new Timer(timeout, recurring, priority);
+    timer.run(() => {
+      try {
+        return callback();
+      } finally {
+        // One-shot timers would otherwise stay in _timers forever
+        if (!recurring) timer.destroy();
+      }
+    });
+    return timer;
   }
 
   static destroy() {
