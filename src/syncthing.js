@@ -1024,6 +1024,11 @@ export class Manager extends Utils.Emitter {
     if (this.#destroyed) return;
     // if ((await this.#extensionConfig.exists()) && this.#serviceActive) {
     if (await this.#extensionConfig.exists()) {
+      // exists() can reload the config asynchronously, and destroy() clears it,
+      // so the manager may have been destroyed during the await. Sending on the
+      // disposed session would re-create a queue source that libsoup never
+      // detaches from the main loop once the session is finalized
+      if (this.#destroyed) return;
       console.debug(
         LOG_PREFIX,
         "opening connection",
@@ -1034,6 +1039,8 @@ export class Manager extends Utils.Emitter {
         GLib.PRIORITY_DEFAULT,
         null,
         (session, result) => {
+          // Requests aborted by destroy() still complete here, on a disposed session
+          if (this.#destroyed) return;
           let connected = false;
           if (msg.status_code == Soup.Status.OK) {
             connected = true;
@@ -1148,6 +1155,11 @@ export class Manager extends Utils.Emitter {
     this.#destroyed = true;
     this.#httpAborting = true;
     this.#httpSession.abort();
+    // abort() leaves the session alive, and a live session keeps its message
+    // queue source attached to the shell main loop. Something still reaches
+    // old managers after disable, so without an explicit dispose every screen
+    // unlock left one more source that the main loop walks on each wakeup
+    this.#httpSession.run_dispose();
     this.#pollTimer.destroy();
     this.#reset();
   }
