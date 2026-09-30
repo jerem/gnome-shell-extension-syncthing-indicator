@@ -367,6 +367,7 @@ class FolderCompletionProxy extends Folder {
 export class Manager extends Utils.Emitter {
   #httpSession = new Soup.Session();
   #httpAborting = false;
+  #destroyed = false;
   #httpErrorCount = 0;
   #serviceRetries = 0;
   #serviceActive = false;
@@ -448,9 +449,10 @@ export class Manager extends Utils.Emitter {
           id: events[i].id,
         });
       }
-      // Reschedule this event stream
+      // Reschedule this event stream, unless this manager was destroyed meanwhile
+      if (this.#destroyed) return;
       Utils.Timer.run(RESCHEDULE_EVENT_DELAY, () => {
-        this.#callEvents("since=" + this.#lastEventID);
+        if (!this.#destroyed) this.#callEvents("since=" + this.#lastEventID);
       });
     });
   }
@@ -932,6 +934,7 @@ export class Manager extends Utils.Emitter {
   }
 
   async #openConnection(method, path, callback) {
+    if (this.#destroyed) return;
     if (await this.#extensionConfig.exists()) {
       let msg = Soup.Message.new(method, this.#extensionConfig.URI + path);
       // Accept self signed certificates (for now)
@@ -944,6 +947,7 @@ export class Manager extends Utils.Emitter {
   }
 
   async #openConnectionMessage(msg, callback) {
+    if (this.#destroyed) return;
     // if ((await this.#extensionConfig.exists()) && this.#serviceActive) {
     if (await this.#extensionConfig.exists()) {
       console.debug(
@@ -1056,6 +1060,11 @@ export class Manager extends Utils.Emitter {
 
   // Release all resources
   destroy() {
+    // Stop the event long poll too, otherwise it keeps rescheduling itself
+    // after every disable (the shell disables extensions on each screen lock)
+    this.#destroyed = true;
+    this.#httpAborting = true;
+    this.#httpSession.abort();
     this.#pollTimer.destroy();
     this.#extensionConfig.destroy();
     this.folders.destroy();
