@@ -319,16 +319,24 @@ export const FolderMenuItem = GObject.registerClass(
       this.actor.add_child(this.label);
       this.actor.label_actor = this.label;
 
-      this._folder.connect(Syncthing.Signal.STATE_CHANGE, (folder, state) => {
-        this.icon.style_class = "popup-menu-icon syncthing-state-icon " + state;
-      });
+      this._folderSignals = [
+        this._folder.connect(Syncthing.Signal.STATE_CHANGE, (folder, state) => {
+          this.icon.style_class =
+            "popup-menu-icon syncthing-state-icon " + state;
+        }),
+        this._folder.connect(Syncthing.Signal.NAME_CHANGE, (folder, name) => {
+          this.label.text = name;
+        }),
+        this._folder.connect(Syncthing.Signal.DESTROY, (folder) => {
+          this.destroy();
+        }),
+      ];
 
-      this._folder.connect(Syncthing.Signal.NAME_CHANGE, (folder, name) => {
-        this.label.text = name;
-      });
-
-      this._folder.connect(Syncthing.Signal.DESTROY, (folder) => {
-        this.destroy();
+      // The destroyed item can outlive the menu, and through _folder it kept
+      // the folder, its manager and the manager's Soup session alive
+      this.connect("destroy", () => {
+        this._folderSignals.forEach((id) => this._folder.disconnect(id));
+        this._folder = null;
       });
     }
 
@@ -386,19 +394,32 @@ export const DeviceMenu = GObject.registerClass(
           this.setHost(device);
         },
       );
+
+      // The destroyed menu can outlive the indicator, and through _host it
+      // kept the host device, its manager and the manager's Soup session alive
+      this.connect("destroy", () => this._releaseHost());
     }
 
     setHost(device) {
+      this._releaseHost();
       this._host = device;
       this.label.text = device.name;
 
-      this._host.connect(Syncthing.Signal.STATE_CHANGE, (device, state) => {
-        this.icon.style_class = "popup-menu-icon syncthing-state-icon " + state;
-      });
+      this._hostSignals = [
+        this._host.connect(Syncthing.Signal.STATE_CHANGE, (device, state) => {
+          this.icon.style_class =
+            "popup-menu-icon syncthing-state-icon " + state;
+        }),
+        this._host.connect(Syncthing.Signal.NAME_CHANGE, (device, name) => {
+          this.label.text = name;
+        }),
+      ];
+    }
 
-      this._host.connect(Syncthing.Signal.NAME_CHANGE, (device, name) => {
-        this.label.text = name;
-      });
+    _releaseHost() {
+      if (!this._host) return;
+      this._hostSignals.forEach((id) => this._host.disconnect(id));
+      this._host = null;
     }
 
     addSectionItem(item) {
@@ -453,7 +474,7 @@ export const DeviceMenuItem = GObject.registerClass(
 
       this.setSensitive(false);
 
-      this._device.connect(Syncthing.Signal.STATE_CHANGE, (device) => {
+      const stateId = this._device.connect(Syncthing.Signal.STATE_CHANGE, (device) => {
         let state = device.state;
         this._detachSwitchSignal();
         switch (state) {
@@ -474,12 +495,19 @@ export const DeviceMenuItem = GObject.registerClass(
         this.icon.style_class = "popup-menu-icon syncthing-state-icon " + state;
       });
 
-      this._device.connect(Syncthing.Signal.NAME_CHANGE, (device, name) => {
+      const nameId = this._device.connect(Syncthing.Signal.NAME_CHANGE, (device, name) => {
         this.label.text = name;
       });
 
-      this._device.connect(Syncthing.Signal.DESTROY, () => {
+      const destroyId = this._device.connect(Syncthing.Signal.DESTROY, () => {
         this.destroy();
+      });
+
+      // Same as FolderMenuItem: drop the device so a leftover item cannot keep
+      // the manager alive
+      this.connect("destroy", () => {
+        [stateId, nameId, destroyId].forEach((id) => this._device.disconnect(id));
+        this._device = null;
       });
     }
 
