@@ -625,7 +625,7 @@ export class Manager extends Utils.Emitter {
         );
         this.folders.add(folder);
       } else {
-        this.folders.get(folderID).setName(name);
+        this.folders.get(folderID).name = name;
       }
       if (config.folders[i].paused) {
         this.folders.get(folderID).state = State.PAUSED;
@@ -708,7 +708,7 @@ export class Manager extends Utils.Emitter {
           }
         } else {
           device = this.devices.get(config.devices[i].deviceID);
-          device.setName(config.devices[i].name);
+          device.name = config.devices[i].name;
         }
       }
     }
@@ -722,6 +722,17 @@ export class Manager extends Utils.Emitter {
   }
 
   async #pollState() {
+    try {
+      await this.#pollStateInner();
+    } catch (error) {
+      console.warn(LOG_PREFIX, "poll state error", error.message);
+    } finally {
+      // Always advance, otherwise a failing hook repeats on every poll
+      this.#pollCount++;
+    }
+  }
+
+  async #pollStateInner() {
     console.debug(
       LOG_PREFIX,
       "poll state",
@@ -761,7 +772,6 @@ export class Manager extends Utils.Emitter {
     } else {
       await this.#isServiceEnabled();
     }
-    this.#pollCount++;
   }
 
   #setService(force = false) {
