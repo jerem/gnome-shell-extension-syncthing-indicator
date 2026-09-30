@@ -438,7 +438,9 @@ export class Manager extends Utils.Emitter {
   }
 
   #callEvents(options) {
-    this.#openConnection("GET", "/rest/events?" + options, (events) => {
+    // Ask Syncthing to answer before libsoup's 60 s read timeout, otherwise the
+    // long poll times out client side and the same message gets re-sent
+    this.#openConnection("GET", "/rest/events?timeout=50&" + options, (events) => {
       for (let i = 0; i < events.length; i++) {
         this.#processEvent({
           type: events[i].type,
