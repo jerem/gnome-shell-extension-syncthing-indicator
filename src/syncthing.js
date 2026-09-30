@@ -417,7 +417,7 @@ export class Manager extends Utils.Emitter {
             break;
           case ServiceState.USER_STOPPED:
           case ServiceState.SYSTEM_STOPPED:
-            this.destroy();
+            this.#reset();
             this.#lastEventID = 1;
             this.#httpErrorCount = 0;
             if (this.#serviceConnected) {
@@ -1058,6 +1058,15 @@ export class Manager extends Utils.Emitter {
     }
   }
 
+  // Drop the service state after it stopped, keeping the manager usable so a
+  // later start is picked up again
+  #reset() {
+    this.#pollTimer.cancel();
+    this.#extensionConfig.destroy();
+    this.folders.destroy();
+    this.devices.destroy();
+  }
+
   // Release all resources
   destroy() {
     // Stop the event long poll too, otherwise it keeps rescheduling itself
@@ -1066,9 +1075,7 @@ export class Manager extends Utils.Emitter {
     this.#httpAborting = true;
     this.#httpSession.abort();
     this.#pollTimer.destroy();
-    this.#extensionConfig.destroy();
-    this.folders.destroy();
-    this.devices.destroy();
+    this.#reset();
   }
 
   // Attach to Syncthing service

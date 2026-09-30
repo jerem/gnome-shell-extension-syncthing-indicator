@@ -53,9 +53,12 @@ export default class SyncthingIndicatorExtension extends Extension {
   disable() {
     Utils.Timer.destroy();
     this.settings = null;
-    this.indicator.destroy();
-    this.indicator = null;
+    // Destroy the manager first: its items' DESTROY signals destroy the menu
+    // items while they still exist, instead of after the indicator took them
+    // down (which logged "has been already disposed" on every disable)
     this.manager.destroy();
     this.manager = null;
+    this.indicator.destroy();
+    this.indicator = null;
   }
 }
