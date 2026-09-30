@@ -24,7 +24,7 @@ export default class SyncthingIndicatorExtension extends Extension {
   enable() {
     this._settingTimer = new Utils.Timer(SETTINGS_DELAY);
     this.settings = this.getSettings();
-    this.settings.connect("changed", () => {
+    this._settingsChangedId = this.settings.connect("changed", () => {
       this._settingTimer.run(() => {
         this.indicator.close();
         this.disable();
@@ -52,6 +52,9 @@ export default class SyncthingIndicatorExtension extends Extension {
 
   disable() {
     Utils.Timer.destroy();
+    // Otherwise every past enable's handler stays connected and re-runs
+    // disable/enable on the next settings change
+    this.settings.disconnect(this._settingsChangedId);
     this.settings = null;
     // Destroy the manager first: its items' DESTROY signals destroy the menu
     // items while they still exist, instead of after the indicator took them
