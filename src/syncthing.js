@@ -489,9 +489,12 @@ export class Manager extends Utils.Emitter {
   // bumps it, so a stale chain stops at its next response instead of
   // rescheduling itself (prevents duplicate/leaking event chains)
   #callEvents(options, generation = ++this.#eventsGeneration) {
+    // Ask Syncthing to answer before libsoup's 60 s read timeout, otherwise
+    // the long poll times out client side and the same message is re-sent
+    // ("soup_message_queue_item_destroy: runtime check failed" in the journal)
     this.#openConnection(
       "GET",
-      "/rest/events?" + options,
+      "/rest/events?timeout=50&" + options,
       (events) => {
         if (this.#destroyed || generation != this.#eventsGeneration) return;
         for (let i = 0; i < events.length; i++) {
